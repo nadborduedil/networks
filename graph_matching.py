@@ -31,11 +31,21 @@ class Matching:
         a = self.ba.pop(b)
         self.ab.pop(a)
 
-    def get_a(self, a):
+    def get_b(self, a):
         return self.ab.get(a)
 
-    def get_b(self, b):
+    def get_a(self, b):
         return self.ba.get(b)
+
+    def pop_a(self, b):
+        x = self.ba.pop(b)
+        self.ab.pop(x)
+        return x
+
+    def pop_b(self, a):
+        x =  self.ab.pop(a)
+        self.ba.pop(x)
+        return x
 
     def items(self):
         return self.ab.items()
@@ -76,40 +86,6 @@ class Timer:
         self.end = time.clock()
         self.interval = self.end - self.start
 
-def match_heuristic(f1, f2):
-    """
-    heuristic solution to the assignment problem that works in n^2.
-    it just assigns the first worker the best job for him and hopes this is
-    globally best. works discouragingly well for the graphs i tested
-
-    takes as inputs two dictionaries of feature vectors and not a cost matrix
-    as in original assignment problem. The correspondence is simple:
-    cost_matrix [a][b] = dist(f1[a], f2[b])
-    not computing the cost matrix explicitly is supposed to save space and time
-    when the input is large. Not sure whether this makes any real difference
-    """
-    f2 = f2.copy()
-    matches = Matching()
-    for node, fs in f1.iteritems():
-        nmatch = min(f2.iteritems(), key=lambda x: dist(x[1], fs))[0]
-        f2.pop(nmatch)
-        matches.add(node, nmatch)
-    return matches
-
-def match_hungarian(f1, f2):
-    labels_1 = f1.keys()
-    labels_2 = f2.keys()
-    vectors_1 = f1.values()
-    vectors_2 = f2.values()
-
-    lmap_1 = dict(list(enumerate(labels_1)))
-    lmap_2 = dict(list(enumerate(labels_2)))
-
-    matr = [[dist(v1, v2) for v2 in vectors_2] for v1 in vectors_1]
-    m = Munkres()
-    raw_match = m.compute(matr)
-    return Matching([(lmap_1[x], lmap_2[y]) for x, y in raw_match])
-
 def match_hungarian_x(cost_matrix):
     return Matching(Munkres().compute(cost_matrix))
 
@@ -133,6 +109,39 @@ def anchored_pagerank(graph, anchor):
     weights = dict((i, 0) for i in graph.nodes())
     weights[anchor] = 1
     return nx.pagerank_numpy(graph, personalization=weights)
+
+def features_dict(graph, anchors, use_dist=True, use_pgrs=True,
+                    use_pgr=True, use_comm=False, use_comm_centr=False):
+    node_feats = {}
+    n = len(graph)
+    if use_dist:
+        dists = nx.all_pairs_shortest_path_length(graph)
+    if use_pgr:
+        pageranks = nx.pagerank_numpy(graph)
+    if use_pgrs:
+        pgr_anchor = [anchored_pagerank(graph, anchor) for anchor in anchors]
+    if use_comm_centr:
+        communicability_centrality = nx.communicability_centrality(graph)
+    if use_comm:
+        communicability = nx.communicability(graph)
+
+    for node in graph.nodes():
+        feats = []
+        if use_dist:
+            feats += [dists[node][anchor] for anchor in anchors]
+        if use_pgrs:
+            feats += [pgr[node]*n for pgr in pgr_anchor]
+        if use_pgr:
+            feats.append(pageranks[node]*n)
+        if use_comm_centr:
+            feats.append(communicability_centrality[node])
+        if use_comm:
+            feats += [communicability[node][anchor] for anchor in anchors]
+
+
+        node_feats[node] = np.array(feats)
+    return node_feats
+
 
 def features_matrix(graph, anchors, use_dist=True, use_pgrs=True,
                     use_pgr=True, use_comm=False, use_comm_centr=False):
@@ -170,15 +179,6 @@ def features_matrix(graph, anchors, use_dist=True, use_pgrs=True,
 def dist(feature_vector_1, feature_vector_2):
     return ((feature_vector_1-feature_vector_2)**2).sum()
 
-def match_graphs(g1, g2, anchors1, anchors2, hungarian=False):
-    feats1 = features_dict(g1, anchors1)
-    feats2 = features_dict(g2, anchors2)
-    if hungarian:
-        matches = match_hungarian(feats1, feats2)
-    else:
-        matches = match_heuristic(feats1, feats2)
-    return matches, feats1, feats2
-
 def make_cost_matrix(g1, g2, anchors1, anchors2, **kwargs):
     f1 = features_matrix(g1, anchors1, **kwargs)
     f2 = features_matrix(g2, anchors2, **kwargs)
@@ -207,7 +207,7 @@ def permuted_graph(g):
     nodes = g.nodes()
     permuted_nodes = np.random.permutation(nodes)
     p = permutation = Matching(list(zip(nodes, permuted_nodes)))
-    edges = [(p.get_a(x), p.get_a(y)) for x, y in
+    edges = [(p.get_b(x), p.get_b(y)) for x, y in
              np.random.permutation(g.edges())]
 
     return nx.Graph(data=edges), permutation
@@ -222,7 +222,7 @@ def score_x(matching, cost_matrix):
 def hits_misses(matching, true_matching):
     hits, misses = 0, 0
     for a, b in matching:
-        if true_matching.get_a(a) == b:
+        if true_matching.get_b(a) == b:
             hits += 1
         else:
             misses += 1
