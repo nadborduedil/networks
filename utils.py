@@ -13,7 +13,7 @@ class Timer:
     def __exit__(self, *args):
         self.end = time.clock()
         self.interval = self.end - self.start
-        print "took %s" % self.interval
+        print "took %.4fs" % self.interval
 
 def memo(cache, key_fun=None):
     def internalFunc(f):

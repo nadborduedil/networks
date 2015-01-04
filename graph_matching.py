@@ -1,9 +1,10 @@
 import networkx as nx
 import numpy as np
-import time
-from munkres import Munkres
 from utils import memo, CACHE_PATH
 from persistent_dict import PersistentDict
+"""TODO: feature extraction should return numpy arrays not dicts this will
+simplify all operations A LOT. Reuquires changing network_generation to
+return graphs with nodes labeled by numbers in range(n)"""
 
 class Matching:
     """
@@ -79,17 +80,64 @@ class Matching:
     def __str__(self):
         return str(self.ab.items())
 
-def match_hungarian_x(cost_matrix):
-    return Matching(Munkres().compute(cost_matrix))
+def normalized_dict(d, order=2):
+    n = len(d)
+    if n == 0:
+        return {}
+    norm = sum(v**order for v in d.values())**(1./order)
+    if norm == 0:
+        return dict((k, 1./n) for k in d.keys())
+    else:
+        return dict((k, v/norm) for k, v in d.items())
 
-def match_heuristic_x(cost_matrix):
-    matches = Matching()
-    for a_node, costs in enumerate(cost_matrix):
-        candidates = [(b_node, cost) for b_node, cost in enumerate(costs) if
-                      not matches.contains_b(b_node)]
-        b_match = min(candidates, key=lambda x: x[1])[0]
-        matches.add(a_node, b_match)
-    return matches
+def normalized(a, order=2, axis=-1):
+    l2 = np.atleast_1d(np.linalg.norm(a, order, axis))
+    l2[l2==0] = 1
+    return a / np.expand_dims(l2, axis)
+
+class DistExtractor:
+    def __init__(self, normalize=False, weight=None):
+        self.normalize = normalize
+        self.weight = weight
+
+    def extract(self, graph, anchors):
+        dists = {}
+        for node in graph.nodes():
+            d = []
+
+            for anchor in anchors:
+                d.append(nx.shortest_path_length(graph, node, anchor))
+            if self.normalize:
+                d = normalized(d)
+            dists[node] = np.array(d)
+        return dists
+
+
+class AnchoredPageranksExtractor:
+    """TODO: sth is wrong with this. result in wrong order"""
+    def __init__(self, normalize=False, weight=None):
+        self.normalize = normalize
+        self.weight = weight
+
+    def extract(self, graph, anchors):
+        n = len(graph)
+        pgranks = dict((node, {}) for node in graph.nodes())
+        for anchor in anchors:
+            weights = dict((i, 0) for i in graph.nodes())
+            weights[anchor] = 1
+            pgr = nx.pagerank_numpy(graph, personalization=weights)
+            for node, v in pgr.items():
+                pgranks[node][anchor] = v
+
+
+        for node, pgr in pgranks.items():
+            pgranks[node] = d = np.array(pgr.values())
+            if self.normalize:
+                pgranks[node] = normalized(d)
+                # d[n] = normalized_dict(pgr)
+        return pgranks
+
+
 
 def anchored_pagerank(graph, anchor):
     weights = dict((i, 0) for i in graph.nodes())
@@ -135,7 +183,9 @@ def features_dict(graph, anchors, use_dist=True, use_pgrs=True,
         if use_dist:
             feats += [dists[node][anchor] for anchor in anchors]
         if use_pgrs:
-            feats += [pgr[node]*n for pgr in pgr_anchor]
+            feats += [pgr_anchor[anchor][node]*n
+                      for anchor in range(len(anchors))]
+            # feats += [pgr[node]*n for pgr in pgr_anchor]
         if use_pgr:
             feats.append(pageranks[node]*n)
         if use_comm_centr:
@@ -148,89 +198,8 @@ def features_dict(graph, anchors, use_dist=True, use_pgrs=True,
     return node_feats
 
 
-def features_matrix(graph, anchors, use_dist=True, use_pgrs=True,
-                    use_pgr=True, use_comm=False, use_comm_centr=False):
-    node_feats = []
-    n = len(graph)
-    if use_dist:
-        dists = nx.all_pairs_shortest_path_length(graph)
-    if use_pgr:
-        pageranks = nx.pagerank_numpy(graph)
-    if use_pgrs:
-        pgr_anchor = [anchored_pagerank(graph, anchor) for anchor in anchors]
-    if use_comm_centr:
-        communicability_centrality = nx.communicability_centrality(graph)
-    if use_comm:
-        communicability = nx.communicability(graph)
-
-    for node in graph.nodes():
-        assert node == len(node_feats)
-        feats = []
-        if use_dist:
-            feats += [dists[node][anchor] for anchor in anchors]
-        if use_pgrs:
-            feats += [pgr[node]*n for pgr in pgr_anchor]
-        if use_pgr:
-            feats.append(pageranks[node]*n)
-        if use_comm_centr:
-            feats.append(communicability_centrality[node])
-        if use_comm:
-            feats += [communicability[node][anchor] for anchor in anchors]
-
-
-        node_feats.append(np.array(feats))
-    return node_feats
 
 def dist(feature_vector_1, feature_vector_2):
     return ((feature_vector_1-feature_vector_2)**2).sum()
-
-def make_cost_matrix(g1, g2, anchors1, anchors2, **kwargs):
-    f1 = features_matrix(g1, anchors1, **kwargs)
-    f2 = features_matrix(g2, anchors2, **kwargs)
-    n1, n2 = len(f1), len(f2)
-    return [[dist(f1[a], f2[b]) for b in range(n2)] for a in range(n1)]
-
-def match_graphs_x(g1, g2, anchors1, anchors2, hungarian=False):
-    f1 = features_dict(g1, anchors1)
-    f2 = features_dict(g2, anchors2)
-
-    labels_1 = f1.keys()
-    labels_2 = f2.keys()
-    vectors_1 = f1.values()
-    vectors_2 = f2.values()
-    lmap_1 = dict(list(enumerate(labels_1)))
-    lmap_2 = dict(list(enumerate(labels_2)))
-
-    cost_matrix = [[dist(v1, v2) for v2 in vectors_2] for v1 in vectors_1]
-    if hungarian:
-        matches = match_hungarian_x(cost_matrix)
-    else:
-        matches = match_heuristic_x(cost_matrix)
-    return matches.map_ab(lambda x: lmap_1[x], lambda y: lmap_2[y]), cost_matrix
-
-def permuted_graph(g):
-    nodes = g.nodes()
-    permuted_nodes = np.random.permutation(nodes)
-    p = permutation = Matching(list(zip(nodes, permuted_nodes)))
-    edges = [(p.get_b(x), p.get_b(y)) for x, y in
-             np.random.permutation(g.edges())]
-
-    return nx.Graph(data=edges), permutation
-
-def score(matching, feat_dict_1, feat_dict_2):
-    return sum(dist(feat_dict_1[a], feat_dict_2[b]) for a, b in matching)
-
-
-def score_x(matching, cost_matrix):
-    return sum(cost_matrix[x][y] for x, y in matching.items())
-
-def hits_misses(matching, true_matching):
-    hits, misses = 0, 0
-    for a, b in matching:
-        if true_matching.get_b(a) == b:
-            hits += 1
-        else:
-            misses += 1
-    return hits, misses
 
 
