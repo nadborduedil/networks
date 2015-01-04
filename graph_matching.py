@@ -2,6 +2,8 @@ import networkx as nx
 import numpy as np
 import time
 from munkres import Munkres
+from utils import memo, CACHE_PATH
+from persistent_dict import PersistentDict
 
 class Matching:
     """
@@ -77,15 +79,6 @@ class Matching:
     def __str__(self):
         return str(self.ab.items())
 
-class Timer:
-    def __enter__(self):
-        self.start = time.clock()
-        return self
-
-    def __exit__(self, *args):
-        self.end = time.clock()
-        self.interval = self.end - self.start
-
 def match_hungarian_x(cost_matrix):
     return Matching(Munkres().compute(cost_matrix))
 
@@ -98,28 +91,40 @@ def match_heuristic_x(cost_matrix):
         matches.add(a_node, b_match)
     return matches
 
-def features_dict(graph, anchors):
-    feats = {}
-    for node in graph.nodes():
-        dists = [nx.shortest_path_length(graph, node, anchor) for anchor in anchors]
-        feats[node] = np.array(dists)
-    return feats
-
 def anchored_pagerank(graph, anchor):
     weights = dict((i, 0) for i in graph.nodes())
     weights[anchor] = 1
     return nx.pagerank_numpy(graph, personalization=weights)
+
+# @memo(PersistentDict(CACHE_PATH+"/graph_matching.pageranks_to_anchors.db"))
+@memo({})
+def pageranks_to_anchors(graph, anchors):
+    return [anchored_pagerank(graph, anchor) for anchor in anchors]
+
+# @memo(PersistentDict(CACHE_PATH+"/graph_matching.dists_to_anchors.db"))
+@memo({})
+def dists_to_anchors(graph, anchors):
+    dists = {}
+    for node in graph.nodes():
+        d = {}
+        dists[node] = d
+        for anchor in anchors:
+            d[anchor] = nx.shortest_path_length(graph, node, anchor)
+
+    return dists
 
 def features_dict(graph, anchors, use_dist=True, use_pgrs=True,
                     use_pgr=True, use_comm=False, use_comm_centr=False):
     node_feats = {}
     n = len(graph)
     if use_dist:
-        dists = nx.all_pairs_shortest_path_length(graph)
+        # dists = nx.all_pairs_shortest_path_length(graph)
+        dists = dists_to_anchors(graph, anchors)
     if use_pgr:
         pageranks = nx.pagerank_numpy(graph)
     if use_pgrs:
-        pgr_anchor = [anchored_pagerank(graph, anchor) for anchor in anchors]
+        # pgr_anchor = [anchored_pagerank(graph, anchor) for anchor in anchors]
+        pgr_anchor = pageranks_to_anchors(graph, anchors)
     if use_comm_centr:
         communicability_centrality = nx.communicability_centrality(graph)
     if use_comm:

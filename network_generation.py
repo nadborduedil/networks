@@ -4,7 +4,8 @@ import networkx as nx
 
 import graph_matching as gm
 
-def decimated_graph(g, p, q):
+
+def decimated_graph(g, p, q, seed=0):
     """returns new graph with random nodes and edges removed
 
     First removes nodes with all their edges, then removes more edges
@@ -13,13 +14,18 @@ def decimated_graph(g, p, q):
     :param q: fraction of edges to retain
     :return: decimated graph
     """
+    random.seed(seed)
     nodes = g.nodes()
     n = len(nodes)
-    n_nodes = set(random.sample(nodes, int(p*n)))
+    n_nodes = set(random.sample(nodes, int(p * n)))
     n_edges = [(a, b) for a, b in g.edges() if a in n_nodes and b in n_nodes]
 
     n_edges = random.sample(n_edges, int(len(n_edges) * q))
-    return nx.Graph(n_edges)
+
+    name = "decimated(%s, %s, %s, %s)" % (g.name if g.name else hash(g), p, q,
+                                          seed)
+
+    return nx.Graph(n_edges, name=name)
 
 
 def kronecker_graph(g, k, add_self_edges=True, strip_self_edges=True):
@@ -42,14 +48,17 @@ def kronecker_graph(g, k, add_self_edges=True, strip_self_edges=True):
         for i in range(len(adj)):
             adj[i, i] = 1
     mat = adj
-    for i in range(k-1):
+    for i in range(k - 1):
         mat = np.kron(mat, adj)
     if strip_self_edges:
         for i in range(len(mat)):
             mat[i, i] = 0
-    return nx.Graph(mat)
+    name = "kronecker(%s, %s, %s, %s)" % (
+        g.name if g.name else hash(g), k, add_self_edges, strip_self_edges)
+    return nx.Graph(mat, name=name)
 
-def permute_graphs(a, b):
+
+def permute_graphs(a, b, seed=0):
     """takes two graphs that have some nodes in commmon and
 
     This function takes a pair of graphs a, b with some corresponding nodes
@@ -62,19 +71,23 @@ def permute_graphs(a, b):
     :param b: the other graph
     :return: graph a' (which is =a in this implementation), graph b', matching
     """
+    np.random.seed(seed)
     nodes = b.nodes()
     permuted_nodes = np.random.permutation(nodes)
 
     # matching of all labels of nodes in graph b to their new values
     match = gm.Matching(zip(nodes, permuted_nodes))
     new_edges = [(match.get_b(x), match.get_b(y)) for x, y in b.edges()]
-    permuted_edges = [(x,y) for x, y in np.random.permutation(new_edges)]
+    permuted_edges = [(x, y) for x, y in np.random.permutation(new_edges)]
     unneeded_nodes = set(nodes).difference(set(a.nodes()))
     for node in unneeded_nodes:
         match.pop_b(node)
-    return a, nx.Graph(permuted_edges), match
+    name = "permuted_b(%s, %s, %s)" % (
+    a.name if a.name else hash(a), b.name if b.name else hash(b), seed)
+    return a, nx.Graph(permuted_edges, name=name), match
 
-def get_anchors_candidates(a, b, match, n_anchors, n_candidates):
+
+def get_anchors_candidates(a, b, match, n_anchors, n_candidates, seed=0):
     """returns randomly selected anchors and candidate sets
 
     Randomly selects a set of pairs of corresponding nodes - anchors. For every
@@ -90,6 +103,7 @@ def get_anchors_candidates(a, b, match, n_anchors, n_candidates):
     :param n_candidates: number of candidates per node
     :return: anchors, candidates
     """
+    random.seed(seed)
     a_nodes = set(a.nodes())
     b_nodes = set(b.nodes())
     anchors = random.sample(match.items(), n_anchors)
@@ -100,7 +114,7 @@ def get_anchors_candidates(a, b, match, n_anchors, n_candidates):
     candidates = {}
     for node in a_nodes:
         if match.contains_a(node):
-            cands = random.sample(b_nodes, n_candidates-1)
+            cands = random.sample(b_nodes, n_candidates - 1)
             cands.append(match.get_b(node))
             candidates[node] = list(set(cands))
     return anchors, candidates
