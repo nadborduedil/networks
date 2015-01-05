@@ -17,8 +17,8 @@ class TestCase:
         self.true_match = true_match
         self.name = name
 
-# @memo(PersistentDict(CACHE_PATH+"/testing.kronecker_regular.db"))
-@memo({})
+@memo(PersistentDict(CACHE_PATH+"/testing.kronecker_regular.db"))
+# @memo({})
 def kronecker_regular(seed_degree=3, seed_nodes=8, exponent=2,
                       a_nodes_left=0.8, a_edges_left=0.8, b_nodes_left=0.8,
                       b_edges_left=0.8, anchors=5, candidates=8,
@@ -38,12 +38,33 @@ def kronecker_regular(seed_degree=3, seed_nodes=8, exponent=2,
         b_nodes_left, b_edges_left, anchors, candidates, random_seed)
     return TestCase(g_a, g_b, anchors, cands, true_match, name)
 
+@memo(PersistentDict(CACHE_PATH+"/testing.star_test_case.db"))
+# @memo({})
+def star_test_case(exponent=3,
+                      a_nodes_left=0.8, a_edges_left=0.8, b_nodes_left=0.8,
+                      b_edges_left=0.8, anchors=5, candidates=8,
+                      random_seed=0):
+    other_seed = random_seed + 1
+    seed_graph = nx.Graph([(0,1), (0,2), (0,3), (0,4)], name="star")
+    g = netgen.kronecker_graph(seed_graph, exponent)
+    g_a = netgen.decimated_graph(g, a_nodes_left, a_edges_left, random_seed)
+    g_b = netgen.decimated_graph(g, b_nodes_left, b_edges_left, other_seed)
+    g_a, g_b, true_match = netgen.permute_graphs(g_a, g_b, random_seed)
+    anchors, cands = netgen.get_anchors_candidates(g_a, g_b, true_match,
+                                                   anchors, candidates,
+                                                   random_seed)
+    anchors = tuple(anchors)
+    name = "star_case(%s, %s, %s, %s, %s, %s, %s, %s)" % (
+        exponent, a_nodes_left, a_edges_left,
+        b_nodes_left, b_edges_left, anchors, candidates, random_seed)
+    return TestCase(g_a, g_b, anchors, cands, true_match, name)
+
 
 def test(matcher, test_case):
     t = test_case
     matches = matcher.generate_matches(t.g_a, t.g_b, t.anchors, t.cands)
 
-    total = len(matches)
+    total = len(t.cands)
     tru = 0
     fal = 0
     for match in matches:

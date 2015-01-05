@@ -95,47 +95,102 @@ def normalized(a, order=2, axis=-1):
     l2[l2==0] = 1
     return a / np.expand_dims(l2, axis)
 
+def _dists_to_anchors(graph, anchors, normalize=False):
+    dists = {}
+    for node in graph.nodes():
+        d = []
+
+        for anchor in anchors:
+            d.append(nx.shortest_path_length(graph, node, anchor))
+        if normalize:
+            d = normalized(d)
+        dists[node] = np.array(d)
+    return dists
+
 class DistExtractor:
     def __init__(self, normalize=False, weight=None):
         self.normalize = normalize
         self.weight = weight
 
     def extract(self, graph, anchors):
-        dists = {}
-        for node in graph.nodes():
-            d = []
+        return _dists_to_anchors(graph, anchors, self.normalize)
 
-            for anchor in anchors:
-                d.append(nx.shortest_path_length(graph, node, anchor))
-            if self.normalize:
-                d = normalized(d)
-            dists[node] = np.array(d)
-        return dists
 
+@memo({})
+def _anchored_pagerank(graph, anchors, normalize=False):
+    n = len(graph)
+    pgranks = dict((node, {}) for node in graph.nodes())
+    for anchor in anchors:
+        weights = dict((i, 0) for i in graph.nodes())
+        weights[anchor] = 1
+        pgr = nx.pagerank_numpy(graph, personalization=weights)
+        for node, v in pgr.items():
+            pgranks[node][anchor] = v
+
+    for node, pgr in pgranks.items():
+        pgranks[node] = d = np.array([pgr[a] for a in anchors])
+        if normalize:
+            pgranks[node] = normalized(d)
+            # d[n] = normalized_dict(pgr)
+    return pgranks
 
 class AnchoredPageranksExtractor:
-    """TODO: sth is wrong with this. result in wrong order"""
     def __init__(self, normalize=False, weight=None):
         self.normalize = normalize
         self.weight = weight
 
     def extract(self, graph, anchors):
-        n = len(graph)
-        pgranks = dict((node, {}) for node in graph.nodes())
+        return _anchored_pagerank(graph, anchors, self.normalize)
+
+
+# this sucks. either there's a fundamental bug or communicability is utterly
+# unsuited for this. Also - im using communicability_exp, because the other
+# one uses spectral decomposition and therefore takes cubic time which is
+# unbearably slow, other than that the both suck the same amount of balls.
+# im only keeping it in as a reminder not to try it again.
+# <suckage>
+@memo({})
+def _communicability_to_anchors(graph, anchors, normalize=False):
+    comm = {}
+    for node, comm_dict in nx.communicability_exp(graph).items():
+        d = np.array([comm_dict[a] for a in anchors])
+        if normalize:
+            d = normalized(d)
+        comm[node] = d
+    return comm
+
+class CommunicabilityExtractor:
+    def __init__(self, normalize=False, weight=None):
+        self.normalize = normalize
+        self.weight = weight
+
+    def extract(self, graph, anchors):
+        return _communicability_to_anchors(graph, anchors, self.normalize)
+# </suckage>
+
+# WOW this is awesome - runs really fast and gives great results
+def _authority_matrix(graph, anchors, normalize):
+    aut = {}
+    node_to_num = dict((node, i) for i, node in enumerate(graph.nodes()))
+    num_to_node = dict(enumerate(graph.nodes()))
+    aut_mat = nx.authority_matrix(graph)
+    for num, node in enumerate(graph.nodes()):
+        d = []
         for anchor in anchors:
-            weights = dict((i, 0) for i in graph.nodes())
-            weights[anchor] = 1
-            pgr = nx.pagerank_numpy(graph, personalization=weights)
-            for node, v in pgr.items():
-                pgranks[node][anchor] = v
+            a_num = node_to_num[anchor]
+            d.append(aut_mat[num, a_num])
+        if normalize:
+            d = normalized(d)
+        aut[node] = np.array(d)
+    return aut
 
+class GenericExtractor:
+    def __init__(self, normalize=False, weight=None):
+        self.normalize = normalize
+        self.weight = weight
 
-        for node, pgr in pgranks.items():
-            pgranks[node] = d = np.array(pgr.values())
-            if self.normalize:
-                pgranks[node] = normalized(d)
-                # d[n] = normalized_dict(pgr)
-        return pgranks
+    def extract(self, graph, anchors):
+        return _authority_matrix(graph, anchors, self.normalize)
 
 
 
@@ -144,13 +199,13 @@ def anchored_pagerank(graph, anchor):
     weights[anchor] = 1
     return nx.pagerank_numpy(graph, personalization=weights)
 
-# @memo(PersistentDict(CACHE_PATH+"/graph_matching.pageranks_to_anchors.db"))
-@memo({})
+@memo(PersistentDict(CACHE_PATH+"/graph_matching.pageranks_to_anchors.db"))
+# @memo({})
 def pageranks_to_anchors(graph, anchors):
     return [anchored_pagerank(graph, anchor) for anchor in anchors]
 
-# @memo(PersistentDict(CACHE_PATH+"/graph_matching.dists_to_anchors.db"))
-@memo({})
+@memo(PersistentDict(CACHE_PATH+"/graph_matching.dists_to_anchors.db"))
+# @memo({})
 def dists_to_anchors(graph, anchors):
     dists = {}
     for node in graph.nodes():
