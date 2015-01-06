@@ -184,13 +184,37 @@ def _authority_matrix(graph, anchors, normalize):
         aut[node] = np.array(d)
     return aut
 
-class GenericExtractor:
+class AuthorityExtractor:
     def __init__(self, normalize=False, weight=None):
         self.normalize = normalize
         self.weight = weight
 
     def extract(self, graph, anchors):
         return _authority_matrix(graph, anchors, self.normalize)
+
+
+def _google_matrix(graph, anchors, normalize):
+    aut = {}
+    node_to_num = dict((node, i) for i, node in enumerate(graph.nodes()))
+    num_to_node = dict(enumerate(graph.nodes()))
+    aut_mat = nx.google_matrix(graph)
+    for num, node in enumerate(graph.nodes()):
+        d = []
+        for anchor in anchors:
+            a_num = node_to_num[anchor]
+            d.append(aut_mat[num, a_num])
+        if normalize:
+            d = normalized(d)
+        aut[node] = np.array(d)
+    return aut
+
+class GoogleExtractor:
+    def __init__(self, normalize=False, weight=None):
+        self.normalize = normalize
+        self.weight = weight
+
+    def extract(self, graph, anchors):
+        return _google_matrix(graph, anchors, self.normalize)
 
 
 
